@@ -14,15 +14,22 @@ import com.wjj.reggie.service.DishService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @RestController
 @Slf4j
 @RequestMapping("/dish")
 public class DishController {
+
+    @Autowired
+    private RedisTemplate redisTemplate;
+
     @Autowired
     private DishService dishService;
 
@@ -87,6 +94,15 @@ public class DishController {
     public R<String> update(@RequestBody DishDto dishDto){
         dishService.updateWithFlavor(dishDto);
 
+        //清理所有菜品的缓存数据
+//        Set keys = redisTemplate.keys("dish_*");
+//        redisTemplate.delete(keys);
+
+        //清理某个分类下面的菜品缓存
+        String key="dish_"+dishDto.getCategoryId()+"_1";
+        redisTemplate.delete(key);
+
+
         return R.success("新增菜品成功");
     }
 
@@ -103,6 +119,15 @@ public class DishController {
 //    }
     @GetMapping("/list")
     public R<List<DishDto>> list(Dish dish){
+        //动态构造key
+        String key="dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+        //先从redis中获取缓存数据
+        List<DishDto> dishDtoList = (List<DishDto>)redisTemplate.opsForValue().get(key);
+
+        if (dishDtoList!=null){
+            return R.success(dishDtoList);
+        }
+
         //构建查询条件
         LambdaQueryWrapper<Dish> queryWrapper=new LambdaQueryWrapper();
         queryWrapper.eq(dish.getCategoryId()!=null,Dish::getCategoryId,dish.getCategoryId());
@@ -112,7 +137,7 @@ public class DishController {
         List<Dish> list = dishService.list(queryWrapper);
 
 
-        List<DishDto> dishDtoList = list.stream().map((item) -> {
+        dishDtoList = list.stream().map((item) -> {
             DishDto dishDto = new DishDto();
 
             BeanUtils.copyProperties(item, dishDto);
@@ -136,6 +161,7 @@ public class DishController {
             return dishDto;
         }).collect(Collectors.toList());
 
+        redisTemplate.opsForValue().set(key,dishDtoList,60, TimeUnit.MINUTES);
 
         return R.success(dishDtoList);
     }
